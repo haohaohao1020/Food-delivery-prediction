@@ -1,0 +1,1006 @@
+<!doctype html>
+<title>配送时长预测 · 建模报告</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Newsreader:ital,opsz,wght@0,6..72,500;1,6..72,500&family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@600;700&display=swap">
+
+<style>
+/* ------------------------------------------------------------------
+   设计计划
+   配色：冷调纸面 + 路线蓝（主数据色）+ 延误橙（对照 / 风险）+ 三级中性墨
+   字体：Newsreader/Noto Serif SC = 标题；Inter/Noto Sans SC = 正文；IBM Plex Mono = 数据
+   布局：左侧固定章节导航（8 项交付物本身就是一个有序清单），右侧单栏长文，
+        顶部 run card 直接给出本次训练的关键数字
+   ------------------------------------------------------------------ */
+:root {
+  --paper: #fbfbfc;
+  --panel: #f2f4f6;
+  --panel-2: #e9edf0;
+  --ink: #12161a;
+  --ink-2: #4e585f;
+  --muted: #868f96;
+  --line: #e2e6e9;
+  --line-strong: #ced5da;
+  --accent: #2a78d6;
+  --accent-wash: #eaf2fd;
+  --warn: #eb6834;
+  --warn-wash: #fdeee7;
+  --good: #0f8a5f;
+  --code-bg: #f4f6f7;
+  --code-ink: #26313a;
+  --shadow: 0 1px 2px rgba(18,22,26,.05), 0 8px 24px -18px rgba(18,22,26,.25);
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #0f1214;
+    --panel: #171c20;
+    --panel-2: #1e252a;
+    --ink: #eef1f3;
+    --ink-2: #b6bfc6;
+    --muted: #8b959c;
+    --line: #262c31;
+    --line-strong: #364047;
+    --accent: #3987e5;
+    --accent-wash: #16273c;
+    --warn: #e07a4f;
+    --warn-wash: #33201a;
+    --good: #2fa87b;
+    --code-bg: #161b1f;
+    --code-ink: #c9d3da;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px -18px rgba(0,0,0,.8);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #0f1214;
+  --panel: #171c20;
+  --panel-2: #1e252a;
+  --ink: #eef1f3;
+  --ink-2: #b6bfc6;
+  --muted: #8b959c;
+  --line: #262c31;
+  --line-strong: #364047;
+  --accent: #3987e5;
+  --accent-wash: #16273c;
+  --warn: #e07a4f;
+  --warn-wash: #33201a;
+  --good: #2fa87b;
+  --code-bg: #161b1f;
+  --code-ink: #c9d3da;
+  --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px -18px rgba(0,0,0,.8);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: "Inter", "Noto Sans SC", system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 15px;
+  line-height: 1.72;
+  padding-block: 0 96px;
+  padding-left: max(20px, env(safe-area-inset-left, 0px));
+  padding-right: max(20px, env(safe-area-inset-right, 0px));
+  -webkit-font-smoothing: antialiased;
+}
+@media (max-width: 900px) {
+  body { padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+}
+.wrap { max-width: 1180px; margin: 0 auto; }
+
+.mono { font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace; }
+.serif { font-family: "Newsreader", "Noto Serif SC", Georgia, serif; }
+
+/* ---------------- 顶部 ---------------- */
+.masthead { padding-block: 44px 30px; border-bottom: 1px solid var(--line); }
+.eyebrow {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 11.5px; letter-spacing: .14em; text-transform: uppercase;
+  color: var(--muted); margin: 0 0 18px;
+  display: flex; gap: 12px; flex-wrap: wrap; align-items: center;
+}
+.eyebrow .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); display: inline-block; }
+h1 {
+  font-family: "Newsreader", "Noto Serif SC", Georgia, serif;
+  font-weight: 600; font-size: clamp(34px, 5.2vw, 56px);
+  line-height: 1.1; letter-spacing: -.01em; margin: 0 0 14px;
+  text-wrap: balance;
+}
+h1 em { font-style: italic; color: var(--accent); }
+.lede { max-width: 62ch; color: var(--ink-2); font-size: 16px; margin: 0; }
+
+/* run card */
+.runcard {
+  margin-top: 30px; display: grid; grid-template-columns: repeat(4, minmax(0,1fr));
+  border: 1px solid var(--line); border-radius: 3px; background: var(--panel);
+  overflow: hidden;
+}
+.runcard > div { padding: 16px 18px; border-right: 1px solid var(--line); }
+.runcard > div:last-child { border-right: 0; }
+.runcard .k {
+  font-family: "IBM Plex Mono", monospace; font-size: 10.5px; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--muted); display: block; margin-bottom: 6px;
+}
+.runcard .v { font-size: 25px; font-weight: 600; letter-spacing: -.02em; line-height: 1.1; }
+.runcard .v small { font-size: 12px; font-weight: 500; color: var(--ink-2); letter-spacing: 0; margin-left: 3px; }
+.runcard .s { font-size: 12px; color: var(--muted); margin-top: 3px; }
+
+/* ---------------- 两栏 ---------------- */
+.layout { display: grid; grid-template-columns: 208px minmax(0, 1fr); gap: 56px; align-items: start; }
+nav.rail { position: sticky; top: 24px; padding-top: 46px; }
+nav.rail ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+nav.rail a {
+  display: grid; grid-template-columns: 22px 1fr; gap: 8px; align-items: baseline;
+  padding: 7px 8px 7px 0; text-decoration: none; color: var(--ink-2);
+  font-size: 13px; line-height: 1.35; border-left: 1px solid var(--line);
+  padding-left: 12px; transition: color .15s, border-color .15s;
+}
+nav.rail a:hover { color: var(--ink); border-left-color: var(--ink); }
+nav.rail a .n { font-family: "IBM Plex Mono", monospace; font-size: 10.5px; color: var(--muted); }
+nav.rail .railfoot { margin-top: 18px; padding-left: 12px; border-left: 1px solid var(--line); font-size: 11.5px; color: var(--muted); line-height: 1.6; }
+
+main { padding-top: 46px; min-width: 0; }
+
+/* ---------------- 章节 ---------------- */
+section.doc { padding-block: 34px 10px; border-top: 1px solid var(--line); }
+section.doc:first-child { border-top: 0; padding-top: 0; }
+.sechead { display: flex; gap: 16px; align-items: baseline; margin-bottom: 6px; }
+.sechead .num {
+  font-family: "IBM Plex Mono", monospace; font-size: 12px; color: var(--accent);
+  letter-spacing: .08em; padding-top: 6px; flex: none;
+}
+h2 {
+  font-family: "Newsreader", "Noto Serif SC", Georgia, serif;
+  font-size: clamp(22px, 2.8vw, 29px); font-weight: 600; line-height: 1.25;
+  margin: 0; letter-spacing: -.005em; text-wrap: balance;
+}
+h3 {
+  font-size: 14.5px; font-weight: 600; margin: 26px 0 8px; letter-spacing: .01em;
+}
+.dek { color: var(--ink-2); font-size: 14px; margin: 6px 0 20px; max-width: 68ch; }
+p { max-width: 70ch; margin: 0 0 14px; }
+strong { font-weight: 600; }
+em.hl { font-style: normal; color: var(--accent); font-weight: 600; }
+
+ul.plain { margin: 0 0 16px; padding-left: 18px; }
+ul.plain li { margin-bottom: 7px; max-width: 68ch; }
+ul.plain li::marker { color: var(--muted); }
+
+/* 表格 */
+.tblwrap { overflow-x: auto; margin: 18px 0 24px; border: 1px solid var(--line); border-radius: 3px; background: var(--paper); }
+table { border-collapse: collapse; width: 100%; font-size: 13.5px; min-width: 520px; }
+th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid var(--line); vertical-align: top; }
+th {
+  font-family: "IBM Plex Mono", monospace; font-size: 10.5px; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--muted); font-weight: 500;
+  background: var(--panel); position: sticky; top: 0;
+}
+tbody tr:last-child td { border-bottom: 0; }
+td.num, th.num { text-align: right; font-family: "IBM Plex Mono", monospace; font-variant-numeric: tabular-nums; white-space: nowrap; }
+tr.pick td { background: var(--accent-wash); }
+tr.pick td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+.tag {
+  display: inline-block; font-size: 10.5px; font-family: "IBM Plex Mono", monospace;
+  padding: 1px 6px; border-radius: 2px; letter-spacing: .04em;
+  background: var(--panel-2); color: var(--ink-2); white-space: nowrap;
+}
+.tag.leak { background: var(--warn-wash); color: var(--warn); }
+.tag.ok { background: var(--accent-wash); color: var(--accent); }
+
+/* 泄露提示块 */
+.callout {
+  border-left: 2px solid var(--warn); background: var(--warn-wash);
+  padding: 14px 18px; margin: 20px 0; border-radius: 0 3px 3px 0;
+}
+.callout .h {
+  font-family: "IBM Plex Mono", monospace; font-size: 10.5px; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--warn); margin-bottom: 5px; display: block;
+}
+.callout p { margin: 0; font-size: 13.5px; color: var(--ink-2); max-width: 72ch; }
+.callout p + p { margin-top: 8px; }
+.note {
+  border: 1px solid var(--line); background: var(--panel); border-radius: 3px;
+  padding: 14px 18px; margin: 20px 0; font-size: 13.5px; color: var(--ink-2);
+}
+.note b { color: var(--ink); font-weight: 600; }
+
+/* 图卡 */
+figure { margin: 26px 0; }
+figure .cap { font-size: 12px; color: var(--muted); margin-top: 8px; display: flex; gap: 10px; flex-wrap: wrap; }
+figure .cap b { color: var(--ink-2); font-weight: 500; }
+.figframe { border: 1px solid var(--line); border-radius: 3px; background: var(--paper); padding: 18px 18px 10px; }
+.fig-t { font-size: 13px; font-weight: 600; margin: 0 0 2px; }
+.fig-s { font-size: 12px; color: var(--muted); margin: 0 0 12px; }
+
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
+@media (max-width: 900px) { .grid2 { grid-template-columns: 1fr; } }
+
+/* 图例 */
+.legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 11.5px; color: var(--ink-2); margin-bottom: 10px; }
+.legend span { display: inline-flex; gap: 6px; align-items: center; }
+.sw { width: 10px; height: 10px; border-radius: 2px; flex: none; }
+
+/* 代码 */
+pre {
+  background: var(--code-bg); color: var(--code-ink);
+  border: 1px solid var(--line); border-radius: 3px;
+  padding: 16px 18px; overflow-x: auto; font-size: 12.2px; line-height: 1.62;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  margin: 14px 0 8px;
+}
+pre .c { color: var(--muted); }
+pre .kw { color: var(--accent); }
+pre .s { color: var(--good); }
+code.inline {
+  font-family: "IBM Plex Mono", monospace; font-size: 12.4px;
+  background: var(--panel-2); padding: 1px 5px; border-radius: 2px;
+}
+.filelist { font-size: 13px; color: var(--ink-2); margin: 10px 0 20px; }
+.filelist code { font-family: "IBM Plex Mono", monospace; color: var(--ink); }
+
+/* 指标卡（业务部分） */
+.stats { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 12px; margin: 20px 0 24px; }
+.stats > div { border: 1px solid var(--line); border-radius: 3px; padding: 14px 16px; background: var(--paper); }
+.stats .k { display: block; font-size: 11px; color: var(--muted); letter-spacing: .04em; }
+.stats .v { display: block; font-family: "IBM Plex Mono", monospace; font-size: 22px; font-weight: 500; margin: 4px 0 2px; font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+.stats .s { display: block; font-size: 11.5px; color: var(--muted); }
+@media (max-width: 640px) { .stats { grid-template-columns: repeat(2, minmax(0,1fr)); } }
+
+/* 高风险工单样例 */
+.wl { border: 1px solid var(--line); border-radius: 3px; overflow: hidden; margin: 18px 0 8px; }
+.wl .row { display: grid; grid-template-columns: 1.35fr 1fr .8fr 1.6fr; gap: 12px; padding: 11px 14px; border-bottom: 1px solid var(--line); font-size: 12.5px; align-items: center; }
+.wl .row:last-child { border-bottom: 0; }
+.wl .hd { background: var(--panel); font-family: "IBM Plex Mono", monospace; font-size: 10.5px; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
+.wl .oid { font-family: "IBM Plex Mono", monospace; font-size: 11.5px; }
+.wl .drv { color: var(--ink-2); font-size: 12px; }
+@media (max-width: 760px) {
+  .wl .row { grid-template-columns: 1fr 1fr; row-gap: 4px; }
+  .wl .hd { display: none; }
+}
+@media (max-width: 640px) { .stats { grid-template-columns: repeat(2, minmax(0,1fr)); } }
+/* 结尾 */
+footer.end { margin-top: 40px; padding-top: 22px; border-top: 1px solid var(--line); font-size: 12.5px; color: var(--muted); display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+
+svg { display: block; width: 100%; height: auto; overflow: visible; }
+.axis text { font-family: "IBM Plex Mono", monospace; font-size: 10px; fill: var(--muted); }
+.axis line { stroke: var(--line); stroke-width: 1; }
+.gridline { stroke: var(--line); stroke-width: 1; }
+.lbl { font-family: "Inter","Noto Sans SC",sans-serif; font-size: 11.5px; fill: var(--ink-2); }
+.lbl-mono { font-family: "IBM Plex Mono", monospace; font-size: 11px; fill: var(--ink-2); }
+.lbl-strong { font-family: "Inter","Noto Sans SC",sans-serif; font-size: 11.5px; fill: var(--ink); font-weight: 600; }
+.bar { fill: var(--line-strong); }
+.bar.on { fill: var(--accent); }
+.bar.warn { fill: var(--warn); }
+.bar.dim { fill: var(--muted); opacity: .45; }
+.hita { fill: transparent; }
+.hita:hover + .bar, .bar:hover { opacity: .82; }
+
+@media (max-width: 1020px) {
+  .layout { grid-template-columns: 1fr; gap: 0; }
+  nav.rail { display: none; }
+  main { padding-top: 30px; }
+}
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+</style>
+
+<div class="wrap">
+  <header class="masthead">
+    <p class="eyebrow"><span class="dot"></span><span>配送时效模型</span><span>·</span><span>建模评审</span><span>·</span><span>2026-11</span></p>
+    <h1>接送单到送达，<br><em>误差 3.4 分钟</em></h1>
+    <p class="lede">基于 60 天、69,831 单城市外卖数据，构建 ETA 回归模型与 P90 风险模型。全程时序切分，历史统计特征严格 as-of 到接单前一日；离线与线上共用同一套特征契约。</p>
+
+    <div class="runcard" id="runcard"></div>
+  </header>
+
+  <div class="layout">
+    <nav class="rail" aria-label="章节导航">
+      <ol id="rail"></ol>
+      <div class="railfoot">测试集 2026-02-22<br>至 2026-03-01<br>共 9,511 单</div>
+    </nav>
+
+    <main>
+
+      <!-- ================= 1 ================= -->
+      <section class="doc" id="s1">
+        <div class="sechead"><span class="num">01</span><h2>业务目标与评估指标</h2></div>
+        <p class="dek">预测时点定在骑手接单瞬间，不是下单瞬间——接单那一刻才同时具备骑手负载、商家出餐压力与路况快照。</p>
+
+        <p><b>目标变量</b>：<code class="inline">duration_min</code>（分钟），从骑手接单到送达。预测时点 <b>T0 = 接单时刻</b>。T0 之后发生的一切（到店、等餐、骑行、进楼）都是待预测内容，不能进入特征。</p>
+
+        <h3>指标选择</h3>
+        <div class="tblwrap">
+          <table>
+            <thead><tr><th>指标</th><th>角色</th><th>为什么是它</th></tr></thead>
+            <tbody>
+              <tr class="pick"><td>MAE</td><td>主指标</td><td>业务损失以分钟线性计价（赔付、骑手奖惩、用户等待），且对长尾单不过度放大。3.4 分钟的误差可直接读成"平均每单多等或少等 3.4 分钟"。</td></tr>
+              <tr><td>RMSE</td><td>辅助</td><td>惩罚大偏差，对应"极端误判"造成的客诉。RMSE 明显高于 MAE 就说明尾部有重罚单。</td></tr>
+              <tr><td>MedAE</td><td>辅助</td><td>典型订单的表现，不被尾部拖拽。</td></tr>
+              <tr><td>P90 绝对误差</td><td>尾部</td><td>运营关心"最差的那批单差多少"，6.9 分钟是当前兜底水位。</td></tr>
+              <tr><td>MAPE</td><td>可比</td><td>只用于和行业口径对齐。分母在短单上过小，本报告仅在真实时长 &gt; 5 分钟时计算。</td></tr>
+              <tr><td>超时识别 F1 / AUC</td><td>决策</td><td>ETA 最终要驱动预警，必须单独评估分类侧，不能只看回归误差。</td></tr>
+              <tr><td>P90 覆盖率</td><td>校准</td><td>承诺"90% 的订单不超过这个时间"。覆盖率偏离 90% 就是概率口径失效。</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p><b>不使用 MSE 作主目标</b>：MSE 的梯度随误差放大，少数 90 分钟以上的异常单会绑架整个模型，而这些单在线上本就应走赔付而非预测。<b>不使用 MAPE 作主目标</b>：5 分钟的单差 3 分钟是 60%，3 分钟的单差 3 分钟是 100%，比例口径会把模型往短单上带偏。</p>
+      </section>
+
+      <!-- ================= 2 ================= -->
+      <section class="doc" id="s2">
+        <div class="sechead"><span class="num">02</span><h2>数据清洗</h2></div>
+        <p class="dek">规则化、可审计、每条规则都留命中数。原则是<b>能重算的修，不能重算的删，真实长尾不洗掉</b>。</p>
+
+        <div class="tblwrap">
+          <table id="clean-table">
+            <thead><tr><th>规则</th><th class="num">命中</th><th>动作</th><th>说明</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+
+        <h3>几个关键判断</h3>
+        <ul class="plain">
+          <li><b>缺失距离用经纬度重算，不是删行。</b>重算值 = 球面直线 × 1.30 绕行系数。5609 条（8%）距离缺失若直接删，等于把"系统字段异常"这一类订单从训练集里剔除，模型学不到它们的真实时长。</li>
+          <li><b>坐标越界不插补。</b>经纬度颠倒、漂移出城市边界的订单（770 条），任何插补都会造出一批"假近单"，污染距离与片区特征。宁可删。</li>
+          <li><b>天气按同日众数回填，再退到全局众数。</b>天气是城市级变量，同日强相关，回填可信；不要按订单随机填。</li>
+          <li><b>目标 ≤ 2 分钟或 &gt; 180 分钟直接剔除。</b>前者是系统时间戳错误，后者应走异常单 / 赔付流程。它们不属于"模型要预测的分布"，留着只会把误差指标做坏。</li>
+          <li><b>加一条物理校验：平均速度 &gt; 70 km/h 必删。</b>外卖两轮车不可能达到，这类记录一定是距离或时间字段错位。这条规则在本数据集命中 0 条，但线上接入新城市时必须保留。</li>
+        </ul>
+
+        <div class="note"><b>清洗后画像：</b>69,831 单，时长均值 32.3 分钟，P90 44.6，P99 62.8。分布右偏，均值被长单抬高，中位数更适合做"城市基准感"的沟通口径。</div>
+      </section>
+
+      <!-- ================= 3 ================= -->
+      <section class="doc" id="s3">
+        <div class="sechead"><span class="num">03</span><h2>特征工程</h2></div>
+        <p class="dek">30 个特征，25 数值 + 5 类别。全部满足一条硬规则：<b>T0 时刻在线上可获取</b>。</p>
+
+        <h3>特征分组</h3>
+        <div class="tblwrap">
+          <table>
+            <thead><tr><th>组</th><th>特征</th><th>业务含义</th></tr></thead>
+            <tbody>
+              <tr><td>基础</td><td class="mono" style="font-size:11.5px">distance_km, straight_km, detour_ratio, items, load, congestion_level, is_long_distance, has_rain</td><td>距离、绕行、商品数、骑手当日负载、拥堵、远单标记。绕行系数 = 路网距离 / 直线距离，捕捉"看着近、实际绕"的片区。</td></tr>
+              <tr><td>时间</td><td class="mono" style="font-size:11.5px">hour, weekday, is_weekend, minute_of_day, hour_sin/cos, weekday_sin/cos, peak_affinity, is_peak, is_late_night, day_of_month, is_month_start_week</td><td>外卖需求是环绕 12:00 / 18:00 的钟形曲线，用 <code class="inline">peak_affinity</code>（到最近高峰的环形距离经 sigmoid 压缩）比整点 one-hot 平滑，避免 11:59 与 12:01 被判成两个世界。</td></tr>
+              <tr><td>空间</td><td class="mono" style="font-size:11.5px">area_pickup, area_drop, same_area, pickup_lat/lon, drop_lat/lon</td><td>取餐片区、送达片区（由坐标反查最近片区中心）、是否同片区。跨片区往往要过主干道或桥，方差更大。</td></tr>
+              <tr><td>统计衍生</td><td class="mono" style="font-size:11.5px">area_hist_avg, area_period_hist_avg, supply_pressure</td><td>片区、片区×时段的历史平均时长（截至昨天累计），以及前一日片区订单量 / 骑手负载得到的供需压力。</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>类别编码</h3>
+        <ul class="plain">
+          <li><b>时段 / 天气 / 商家类型 / 取送片区</b>：LightGBM 直接用 <code class="inline">category</code> dtype，原生做类别分裂，不需要 one-hot。这样单列就能表达"雨 × 晚高峰"这类组合，而不会把特征空间炸开。</li>
+          <li><b>不在树模型里做 one-hot</b>：片区 8 类、时段 5 类，one-hot 后 30 维变 60+ 维，反而稀释分裂收益。</li>
+          <li><b>线性回归 / MLP 对照模型</b>才用 one-hot + 中位数填补 + 标准化，两条管线分开，互不干扰。</li>
+          <li><b>不做高基数 ID 编码</b>（商家 ID、骑手 ID）。它们会直接记住个体结果，是过拟合与泄露的高发区。要用商家维度，只允许用"截至昨天的商家历史均时长"这类聚合量。</li>
+        </ul>
+
+        <div class="callout">
+          <span class="h">时间泄露风险点（逐条标注）</span>
+          <p><b class="tag leak">高危</b> 用<strong>当天全量</strong>统计（片区当天均时长、当天订单量）—— 包含本单与当日未来订单的结果。必须 as-of 到 T-1。本报告所有历史统计均按"累计到前一天"计算，测试集上仍保留这个约束。</p>
+          <p><b class="tag leak">高危</b> 用订单<strong>完成时间</strong>、骑手到店时间、取餐时间派生任何字段（如"等餐时长""骑行时长"）—— 这些是目标的可加分解，等价于直接给答案。</p>
+          <p><b class="tag leak">高危</b> 目标编码（target encoding）在<strong>全量数据</strong>上计算，而不是折内 / 时间片内计算。哪怕只算一次，也是把测试集信息带进训练。</p>
+          <p><b class="tag leak">中危</b> "当日累计订单量"若统计整个自然日，就是未来信息；只能统计到<strong>当前分钟</strong>。</p>
+          <p><b class="tag leak">中危</b> 分箱边界、标准化参数、异常阈值在全量数据上拟合。本报告所有拟合类步骤只用训练段。</p>
+          <p><b class="tag leak">中危</b> 使用天气<strong>实况</strong>而非预报。线上 T0 只能拿到预报；离线若用实况，等于提前知道雨会不会下大。</p>
+          <p><b class="tag leak">低危</b> 用"骑手历史准时率"这类聚合特征时，若该聚合包含本单，仍属泄露。聚合窗口必须止于本单之前。</p>
+        </div>
+      </section>
+
+      <!-- ================= 4 ================= -->
+      <section class="doc" id="s4">
+        <div class="sechead"><span class="num">04</span><h2>模型选型对比</h2></div>
+        <p class="dek">同一份时序切分、同一套特征、同一测试段。指标单位：分钟。</p>
+
+        <div class="figframe">
+          <p class="fig-t">测试集 MAE 对比</p>
+          <p class="fig-s">含两条基线：规则公式与全局均值。柱长即 MAE，越短越好。</p>
+          <div class="legend"><span><i class="sw" style="background:var(--accent)"></i>选定方案</span><span><i class="sw" style="background:var(--muted);opacity:.45"></i>候选 / 基线</span></div>
+          <div id="chart-models"></div>
+        </div>
+
+        <div class="tblwrap">
+          <table>
+            <thead><tr><th>模型</th><th class="num">MAE</th><th class="num">RMSE</th><th class="num">MAPE</th><th class="num">R²</th><th>优点</th><th>缺点</th></tr></thead>
+            <tbody id="model-table"></tbody>
+          </table>
+        </div>
+
+        <h3>为什么不是 CatBoost</h3>
+        <p>CatBoost 的 MAE 是 3.23，比选定的 LightGBM 低 0.14 分钟（约 4%）。这不是可以忽略的差距，但落地权衡如下：</p>
+        <ul class="plain">
+          <li><b>单调约束</b>：LightGBM 有 <code class="inline">monotone_constraints</code>（advanced 方法），可以直接锁死"距离↑、拥堵↑、负载↑ 则时长不降"。CatBoost 的单调约束只能按特征全局声明，且与缺失/类别特征组合时限制更多。</li>
+          <li><b>同一框架出 P50 与 P90</b>：上调用的风险模型与 ETA 模型共用特征预处理、共用归因方式，运维面小一半。</li>
+          <li><b>推理与部署</b>：LightGBM 文本模型约 3 MB，热加载毫秒级；CatBoost 的类别处理带来更大的模型与更慢的单行推理，按峰值 QPS 估算成本更高。</li>
+          <li><b>可解释</b>：LightGBM 的 <code class="inline">pred_contrib</code> 直接给出分钟级 SHAP 贡献，运营工单可以直接展示"距离 +24.1 分、拥堵 +4.8 分"。</li>
+        </ul>
+        <p>结论：<b>LightGBM + 单调约束</b>上线，<b>CatBoost 作为影子模型</b>并行打分，连续 4 周线上 MAE 领先超过 0.2 分钟再考虑切换。</p>
+
+        <h3>XGBoost 与 DNN 的定位</h3>
+        <p>XGBoost 在这里偏弱（3.89）主要是 <code class="inline">reg:absoluteerror</code> 的二阶信息退化，收敛不如 L1/Huber 稳定；换 <code class="inline">reg:squarederror</code> 会改善 RMSE 但 MAE 未必。DNN（4.19）表现最差，符合预期：表格型特征、样本量 5 万级、类别基数小，树模型仍是更优归纳偏置。若未来接入骑手轨迹序列、商家出餐历史序列，DNN / 序列模型才值得重新评估。</p>
+      </section>
+
+      <!-- ================= 5 ================= -->
+      <section class="doc" id="s5">
+        <div class="sechead"><span class="num">05</span><h2>数据集划分策略</h2></div>
+        <p class="dek">按天切分，段与段之间留隔离带。禁止随机打乱。</p>
+
+        <div class="figframe">
+          <p class="fig-t">60 天时间轴与切分</p>
+          <p class="fig-s">培训 42 天 → 隔离 1 天 → 验证 8 天 → 隔离 1 天 → 测试 8 天。隔离带上的订单不参与任何训练、调参或校准。</p>
+          <div id="chart-split"></div>
+        </div>
+
+        <div class="grid2">
+          <div>
+            <h3>为什么必须时序切分</h3>
+            <ul class="plain">
+              <li>外卖是<b>同日强相关</b>业务：同一天的天气、运力、大促、交通管制会同时影响当天所有订单。随机打乱会把同一天的订单同时放进训练与测试，模型等于提前知道了"今天全城偏慢"。</li>
+              <li>实测差距：同一份合法特征，随机切分 MAE <span class="mono">2.59</span>，时序切分 <span class="mono">3.51</span>。<b>随机切分系统性低估 26%</b>。</li>
+              <li>随机切分还会让同一订单的重复/近重复记录跨集分布，进一步虚高效果。</li>
+            </ul>
+          </div>
+          <div>
+            <h3>划分逻辑</h3>
+            <ul class="plain">
+              <li><b>训练 2026-01-01 ~ 02-11</b>：48,001 单，含跨年、工作日/周末、晴雨风。</li>
+              <li><b>验证 02-13 ~ 02-20</b>：9,664 单，用于早停、调参、P90 校准、风险阈值标定。</li>
+              <li><b>测试 02-22 ~ 03-01</b>：9,511 单，只评估，一次性使用。</li>
+              <li><b>隔离带 1 天</b>：防止边界处相邻日期的强相关（同一次冷空气过程、同一个大促周期）跨段渗透。当前统计窗口是"截至昨日的全历史累计"，1 天足够；若改成 7 日滑窗，隔离带必须同步改为 7 天。</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="note" id="leaknote"></div>
+
+        <h3>三层防泄露防线</h3>
+        <ul class="plain">
+          <li><b>切分层</b>：时序切分 + 隔离带 + 测试集只用一次。</li>
+          <li><b>特征层</b>：所有历史统计 as-of 到 T-1；线上特征快照按 PIT（point-in-time）join，拒绝读取当天分区。</li>
+          <li><b>决策层</b>：风险阈值与 P90 校准偏移只在验证集标定。任何在测试集上"微调一下阈值"的动作都是把测试集变成验证集。</li>
+        </ul>
+      </section>
+
+      <!-- ================= 6 ================= -->
+      <section class="doc" id="s6">
+        <div class="sechead"><span class="num">06</span><h2>训练策略与过拟合防范</h2></div>
+        <p class="dek">目标函数、正则、单调先验三层同时收口，最终早停在 389 轮。</p>
+
+        <div class="grid2">
+          <div>
+            <h3>目标函数：Huber δ = 6</h3>
+            <p>LightGBM 的 <code class="inline">monotone_constraints</code> 不支持 <code class="inline">regression_l1</code> 与 <code class="inline">quantile</code> 目标。Huber 在 |误差| &lt; δ 时梯度近似 MAE，超出后转为有界梯度，既保留 L1 的抗长尾特性，又能启用单调约束。δ = 6 分钟，约等于目标 P90 绝对误差的量级。</p>
+          </div>
+          <div>
+            <h3>核心超参</h3>
+            <p class="mono" style="font-size:12px;line-height:1.9;color:var(--ink-2)">learning_rate 0.03 · num_leaves 48<br>min_data_in_leaf 120 · max_bin 255<br>feature_fraction 0.82 · bagging 0.82/1<br>lambda_l2 5.0 · early_stopping 120<br>best_iteration <b style="color:var(--ink)">389</b></p>
+          </div>
+        </div>
+
+        <h3>单调约束：把业务先验写进模型</h3>
+        <p>对 <code class="inline">distance_km, straight_km, detour_ratio, congestion_level, items, load, has_rain</code> 施加 +1 约束：这些量增加时，预测时长不允许下降。收益有三层：</p>
+        <ul class="plain">
+          <li><b>可解释</b>：运营问"为什么这单预估 70 分钟"，答案不会出现"因为距离更远反而更快"的反直觉结论。</li>
+          <li><b>抗稀疏</b>：极端组合（暴雨 + 远单 + 12 件商品）在训练集里样本极少，无约束模型可能给出荒谬的低估；单调先验把预测压回合理方向。测试集 MAE 只差 0.01 分钟，但尾部稳定性更好。</li>
+          <li><b>可审计</b>：模型行为可被业务方用一句话验证，不必依赖事后解释。</li>
+        </ul>
+
+        <h3>过拟合防范</h3>
+        <div class="tblwrap">
+          <table>
+            <thead><tr><th>手段</th><th>做法</th><th>针对的风险</th></tr></thead>
+            <tbody>
+              <tr><td>时序早停</td><td>用验证段 120 轮无提升即停（最终 389 轮）</td><td>训练集越跑越拟合当日噪声</td></tr>
+              <tr><td>叶子样本下限</td><td>min_data_in_leaf = 120</td><td>单个骑手 / 单个商家被单独切成一片叶子</td></tr>
+              <tr><td>行列采样</td><td>feature_fraction / bagging_fraction = 0.82</td><td>对少数强特征过依赖</td></tr>
+              <tr><td>L2 正则</td><td>lambda_l2 = 5.0</td><td>叶子权重过大</td></tr>
+              <tr><td>特征上限</td><td>30 个特征，无 ID 类特征</td><td>维度膨胀后记住个体</td></tr>
+              <tr><td>单调先验</td><td>7 个方向约束</td><td>数据稀疏区的反直觉外推</td></tr>
+              <tr><td>目标裁剪</td><td>清洗阶段剔除 &gt;180 分钟</td><td>异常单主导损失</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>调参方向（按收益排序）</h3>
+        <ul class="plain">
+          <li><b>1. 特征 &gt; 超参。</b>当前增益最大的是 dist 之外的"等餐侧"信息：商家实时出餐时长、商家近 30 分钟单量、骑手当前在手单数。这三类特征上线后预计还能降 0.3~0.6 分钟。</li>
+          <li><b>2. 目标函数与校准。</b>P90 的原始覆盖率只有 81.7%，校准后到 90.3%。比调 num_leaves 更有价值。</li>
+          <li><b>3. 超参搜索。</b>Optuna TPE，200 次试验，搜索空间：learning_rate [0.015, 0.06]（对数）、num_leaves [24, 96]、min_data_in_leaf [60, 400]、feature_fraction [0.6, 0.95]、lambda_l2 [1, 30]、max_bin [127, 511]。用验证段 MAE 作目标，不做交叉验证（会破坏时序性）。</li>
+          <li><b>4. 分群建模。</b>远单（&gt; 6 km）与近单的时长机制不同，可试"单模型 + 距离交互特征"先，再评估分群模型是否值得增加维护成本。</li>
+        </ul>
+      </section>
+
+      <!-- ================= 7 ================= -->
+      <section class="doc" id="s7">
+        <div class="sechead"><span class="num">07</span><h2>上线推理、阈值与失效场景</h2></div>
+        <p class="dek">离线误差只是入场券，线上要解决的是特征一致性、概率校准与坏日子。</p>
+
+        <div class="stats" id="bizstats"></div>
+
+        <h3>推理链路</h3>
+        <ul class="plain">
+          <li><b>特征一致性</b>：离线与线上共用同一份特征变换代码（<code class="inline">build_features</code> 的线上版 <code class="inline">build_live_row</code>），任何一侧改动都要走同一套单测。离线用 pandas 整表聚合，线上读天级快照，二者必须能对上同一行。</li>
+          <li><b>PIT join</b>：特征快照表带 <code class="inline">stat_date</code>，读取时强制 <code class="inline">stat_date &lt; order_date</code>。这行断言是防线上穿越的最后一道闸，必须写死在特征读取层，而不是指望调用方自觉。</li>
+          <li><b>打分输出</b>：P50（用户端 ETA）+ P90（运营风险）+ 归因（minute 级 SHAP）。P90 与 P50 若出现交叉（分位模型独立训练），取 <code class="inline">max(P90, P50)</code>。</li>
+          <li><b>性能</b>：LightGBM 文本模型 3 MB，单行推理 &lt; 1 ms，批量 1000 行约 8 ms。服务启动预热一次，常驻内存。</li>
+          <li><b>降级</b>：模型不可用或关键特征缺失 &gt; 2 个 → 退到规则公式（距离 / 18 km/h + 12 分钟）→ 再退到"城市 × 时段"均值表。降级必须打点，否则线上误差升了没人知道。</li>
+        </ul>
+
+        <h3>业务阈值</h3>
+        <div class="tblwrap">
+          <table>
+            <thead><tr><th>阈值</th><th class="num">取值</th><th>口径</th></tr></thead>
+            <tbody>
+              <tr><td>超时线 SLA</td><td class="num">45 分钟</td><td>城市级赔付与考核口径，可按片区/品类配置。</td></tr>
+              <tr><td>P90 预警线</td><td class="num" id="th-p90"></td><td>验证集 F1 最优得到，测试集 P90 &gt; 该值则打标推运营。</td></tr>
+              <tr><td>P90 校准偏移 δ</td><td class="num" id="th-delta"></td><td>验证集逐日 P90 残差的 P90，加到分位模型输出上。取最大日会被单个极端日带偏，故取分位。</td></tr>
+              <tr><td>ETA 展示下限</td><td class="num">18 分钟</td><td>低于此值用户不信，且末端交付有物理下限。展示层裁剪，不影响模型输出。</td></tr>
+              <tr><td>模型重训</td><td class="num">每周</td><td>滚动最近 60 天。影子模型先跑 3 天再切。</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>逐日 P90 覆盖率：坏日子藏不住</h3>
+        <p>整体覆盖率 90.3% 达标，但按天拆开后，测试段最差的一天只有 76%。这正是线上必须按天监控的原因——只看整体，会把系统性漂移读成"偶发波动"。</p>
+        <div class="figframe">
+          <p class="fig-t">测试段逐日 P90 覆盖率</p>
+          <p class="fig-s">虚线为名义 90%。低于 85% 的两天均对应雨 + 晚高峰叠加。</p>
+          <div id="chart-coverage"></div>
+        </div>
+
+        <h3>典型失效 case</h3>
+        <div class="tblwrap">
+          <table>
+            <thead><tr><th>场景</th><th>表现</th><th>处理</th></tr></thead>
+            <tbody>
+              <tr><td>极端天气 / 大促</td><td>全城时长整体上移 15~30%，模型按特征给不出这个整体抬升，P90 覆盖率掉到 76%</td><td>按天滚动校准 δ；触发"城市异常日"开关，整体乘系数并人工复核</td></tr>
+              <tr><td>新片区冷启动</td><td>无历史统计，<code class="inline">area_hist_avg</code> 为空，预测退回全局均值，方差大</td><td>片区上线前先跑 2 周影子积累统计；空值走"城市均值 × 片区难度系数"兜底</td></tr>
+              <tr><td>单商家爆单 / 出餐故障</td><td>等餐时长暴涨但特征里只有商家类型，严重低估</td><td>接入商家实时出餐时长与近 30 分钟单量；商家异常时给片区级加成</td></tr>
+              <tr><td>骑手挂多单同送</td><td>骑手在手单数增加导致绕行，当前只有"当日已接单量"，粒度太粗</td><td>补"骑手当前在手单数""同向合并单数"特征</td></tr>
+              <tr><td>地址 / POI 错误</td><td>末端交付时间从 2 分钟涨到 10 分钟，任何特征都看不出来</td><td>识别"历史投诉地址""定位漂移"，走末端时长上浮规则</td></tr>
+              <tr><td>跨江 / 跨桥订单</td><td>直线距离近但只有固定桥可过，绕行系数低估</td><td>用路网距离替代球面距离；路网不可得时按片区对历史绕行系数</td></tr>
+              <tr><td>时间戳错乱</td><td>接单时间晚于送达时间，或时区错</td><td>推理入口做单调性校验，异常单直接降级到规则</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>业务可解释：高风险订单怎么排查</h3>
+        <p>每单输出 P50 / P90 与前三项驱动因素（分钟级贡献）。运营看到的不再是一个数字，而是可核对的分解。</p>
+        <div class="wl" id="watchlist"></div>
+        <p class="cap" style="font-size:12px;color:var(--muted);margin-top:8px">样例取自测试集 P90 最高的订单。归因为 LightGBM <code class="inline">pred_contrib</code>，单位分钟，正数表示把预测推高。</p>
+      </section>
+
+      <!-- ================= 8 ================= -->
+      <section class="doc" id="s8">
+        <div class="sechead"><span class="num">08</span><h2>代码与产出</h2></div>
+        <p class="dek">完整脚本可直接运行，随机种子固定，约 30 秒跑完。</p>
+
+        <p class="filelist">
+          <code>src/delivery_eta.py</code> — 造数、清洗、特征、切分、多模型对比、LightGBM 训练、评估、四张图、导出 <code>chart_data.json</code><br>
+          <code>src/infer_example.py</code> — 线上打分示例，含天级特征快照与 PIT 读取约束<br>
+          <code>outputs/</code> — 图表、模型文件 <code>lgbm_eta.txt</code>、模型包 <code>eta_bundle.joblib</code>
+        </p>
+
+        <h3>核心代码</h3>
+<pre><span class="c"># ---------- 特征：所有历史统计严格 as-of 到前一天 ----------</span>
+daily = (f.groupby([<span class="s">"order_date"</span>, <span class="s">"area_pickup"</span>])[<span class="s">"duration_min"</span>]
+          .agg([<span class="s">"sum"</span>, <span class="s">"count"</span>]).reset_index()
+          .sort_values([<span class="s">"area_pickup"</span>, <span class="s">"order_date"</span>]))
+g = daily.groupby(<span class="s">"area_pickup"</span>, sort=<span class="kw">False</span>)
+<span class="c"># cumsum 包含当天，减掉当天 → 得到"截至昨天"的累计量</span>
+daily[<span class="s">"hist_sum"</span>] = g[<span class="s">"sum"</span>].cumsum() - daily[<span class="s">"sum"</span>]
+daily[<span class="s">"hist_cnt"</span>] = g[<span class="s">"count"</span>].cumsum() - daily[<span class="s">"count"</span>]
+daily[<span class="s">"area_hist_avg"</span>] = np.where(
+    daily[<span class="s">"hist_cnt"</span>] &gt;= 30, daily[<span class="s">"hist_sum"</span>] / daily[<span class="s">"hist_cnt"</span>], np.nan)
+
+<span class="c"># ---------- 时序切分：按天切 + 隔离带 ----------</span>
+d = df[<span class="s">"order_date"</span>].dt.normalize()
+train_end   = d.min() + pd.Timedelta(days=train_days - 1)
+valid_start = train_end + pd.Timedelta(days=1 + embargo_days)
+valid_end   = valid_start + pd.Timedelta(days=valid_days - 1)
+test_start  = valid_end + pd.Timedelta(days=1 + embargo_days)
+tr, va, te = df[d &lt;= train_end], df[(d &gt;= valid_start) &amp; (d &lt;= valid_end)], df[d &gt;= test_start]
+
+<span class="c"># ---------- 训练：Huber + 单调约束 + 时序早停 ----------</span>
+p = dict(objective=<span class="s">"huber"</span>, alpha=6.0, metric=<span class="s">"mae"</span>, learning_rate=0.03,
+         num_leaves=48, min_data_in_leaf=120, feature_fraction=0.82,
+         bagging_fraction=0.82, bagging_freq=1, lambda_l2=5.0, seed=42)
+<span class="c"># 距离/拥堵/商品数/负载/绕行/雨 → 预测时长不得下降</span>
+p[<span class="s">"monotone_constraints"</span>] = [MONOTONE.get(c, 0) <span class="kw">for</span> c <span class="kw">in</span> X_tr.columns]
+p[<span class="s">"monotone_constraints_method"</span>] = <span class="s">"advanced"</span>
+model = lgb.train(p, lgb.Dataset(X_tr, y_tr), num_boost_round=2500,
+                  valid_sets=[lgb.Dataset(X_va, y_va)],
+                  callbacks=[lgb.early_stopping(120, verbose=<span class="kw">False</span>)])
+
+<span class="c"># ---------- P90 校准：只用验证集，测试集一次不碰 ----------</span>
+va_raw   = q90.predict(X_va)
+day_q90  = (pd.Series(y_va - va_raw)
+            .groupby(pd.DatetimeIndex(va[<span class="s">"order_date"</span>]).normalize())
+            .quantile(0.90))
+delta    = float(np.quantile(day_q90.to_numpy(), 0.90))
+p90_final = q90.predict(X_te) + delta      <span class="c"># 覆盖率 81.7% → 90.3%</span>
+</pre>
+
+        <h3>结果图</h3>
+        <div class="figframe">
+          <p class="fig-t">真实值 vs 预测值</p>
+          <p class="fig-s">hexbin 密度图，虚线为完美预测。主对角线紧、尾部略低，说明长单存在系统性低估。</p>
+          <div class="legend"><span><i class="sw" style="background:var(--accent);opacity:.9"></i>订单密度高</span><span><i class="sw" style="background:var(--accent);opacity:.12"></i>低</span><span><i class="sw" style="background:var(--muted);height:1px;width:14px;border-radius:0"></i>完美预测</span></div>
+          <div id="chart-scatter"></div>
+        </div>
+
+        <div class="grid2">
+          <div class="figframe">
+            <p class="fig-t">特征重要性</p>
+            <p class="fig-s">gain 占比，前 12 项。</p>
+            <div id="chart-imp"></div>
+          </div>
+          <div class="figframe">
+            <p class="fig-t">误差分布</p>
+            <p class="fig-s">预测 − 真实。均值偏 −0.8 分钟，整体略低估。</p>
+            <div id="chart-resid"></div>
+          </div>
+        </div>
+
+        <h3>分时段误差</h3>
+        <div class="tblwrap">
+          <table id="period-table">
+            <thead><tr><th>时段</th><th class="num">MAE（分钟）</th><th class="num">测试样本</th><th>读法</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <p>晚高峰最差（3.61），凌晨最好（3.13）。差距不大，说明时间特征已经把峰谷消化掉了；晚高峰的残余误差主要来自商家出餐的随机性，不是模型没学到时段。</p>
+      </section>
+
+      <footer class="end">
+        <span>数据与模型均为模拟，用于流程演示；结构对齐真实外卖业务。</span>
+        <span class="mono">LightGBM 4.6 · 69,831 单 · 60 天</span>
+      </footer>
+    </main>
+  </div>
+</div>
+
+<script id="chart-data" type="application/json">__CHART_DATA__</script>
+<script>
+(() => {
+  const D = JSON.parse(document.getElementById('chart-data').textContent);
+  const NS = 'http://www.w3.org/2000/svg';
+  const el = (tag, attrs = {}, parent) => {
+    const n = document.createElementNS(NS, tag);
+    for (const k in attrs) n.setAttribute(k, attrs[k]);
+    if (parent) parent.appendChild(n);
+    return n;
+  };
+  const svg = (host, w, h) => {
+    const s = el('svg', { viewBox: `0 0 ${w} ${h}`, role: 'img' });
+    host.appendChild(s);
+    return s;
+  };
+  const fmt = (v, d = 1) => Number(v).toFixed(d);
+  const pct = (v, d = 1) => (v * 100).toFixed(d) + '%';
+
+  /* ---------------- run card ---------------- */
+  const rc = document.getElementById('runcard');
+  const m = D.metrics, ot = D.overtime, p90 = D.p90;
+  const cards = [
+    ['测试集 MAE', fmt(m.mae, 2), '分钟', '较规则基线 −69%'],
+    ['RMSE', fmt(m.rmse, 2), '分钟', `R² ${fmt(m.r2, 3)}`],
+    ['P90 绝对误差', fmt(m.p90_abs_err, 1), '分钟', `误差 ≤5 分钟占 ${pct(D.residual.within5, 0)}`],
+    ['样本 / 特征', D.meta.n_clean.toLocaleString(), '单', `${D.meta.days} 天 · ${D.meta.features} 特征`],
+  ];
+  rc.innerHTML = cards.map(([k, v, u, s]) =>
+    `<div><span class="k">${k}</span><span class="v">${v}<small>${u}</small></span><span class="s">${s}</span></div>`
+  ).join('');
+
+  /* ---------------- rail ---------------- */
+  const secs = [
+    ['s1', '业务目标与指标'], ['s2', '数据清洗'], ['s3', '特征工程'],
+    ['s4', '模型选型对比'], ['s5', '数据集划分'], ['s6', '训练与防过拟合'],
+    ['s7', '上线与失效场景'], ['s8', '代码与产出'],
+  ];
+  document.getElementById('rail').innerHTML = secs.map(([id, t], i) =>
+    `<li><a href="#${id}"><span class="n">${String(i + 1).padStart(2, '0')}</span><span>${t}</span></a></li>`
+  ).join('');
+
+  /* ---------------- 清洗规则表 ---------------- */
+  const actClass = (a) => /删除/.test(a) ? 'tag' : (/回填|重算|重设/.test(a) ? 'tag ok' : 'tag');
+  document.querySelector('#clean-table tbody').innerHTML = D.clean_rules.map(r => {
+    if (r.rule === '合计') return '';
+    return `<tr><td>${r.rule}</td><td class="num">${r.hit.toLocaleString()}</td><td><span class="${actClass(r.action)}">${r.action}</span></td><td style="color:var(--muted);font-size:12.5px">${r.note || ''}</td></tr>`;
+  }).join('') + `<tr><td><b>合计删除</b></td><td class="num"><b>${D.clean_rules.find(r => r.rule === '合计').hit.toLocaleString()}</b></td><td colspan="2" style="color:var(--muted);font-size:12.5px">保留 ${D.meta.n_clean.toLocaleString()} / ${D.meta.n_raw.toLocaleString()} = ${pct(D.meta.n_clean / D.meta.n_raw, 1)}</td></tr>`;
+
+  /* ---------------- 模型对比图 ---------------- */
+  (() => {
+    const rows = [...D.model_compare].sort((a, b) => b.mae - a.mae);
+    const max = Math.max(...rows.map(r => r.mae)) * 1.06;
+    const W = 760, rowH = 30, PADL = 186, PADR = 58, top = 12;
+    const H = top + rows.length * rowH + 34;
+    const s = svg(document.getElementById('chart-models'), W, H);
+    const x = v => PADL + (v / max) * (W - PADL - PADR);
+    // 网格
+    for (let t = 0; t <= max; t += 2) {
+      el('line', { x1: x(t), x2: x(t), y1: top, y2: H - 26, class: 'gridline' }, s);
+      const tx = el('text', { x: x(t), y: H - 10, 'text-anchor': 'middle', class: 'lbl-mono' }, s);
+      tx.textContent = t;
+    }
+    rows.forEach((r, i) => {
+      const y = top + i * rowH;
+      const chosen = /单调约束/.test(r.name);
+      const t = el('text', { x: PADL - 12, y: y + rowH / 2 + 4, 'text-anchor': 'end', class: chosen ? 'lbl-strong' : 'lbl' }, s);
+      t.textContent = r.name;
+      const bh = 14, bw = Math.max(2, x(r.mae) - PADL);
+      el('rect', {
+        x: PADL, y: y + (rowH - bh) / 2, width: bw, height: bh, rx: 3,
+        class: chosen ? 'bar on' : 'bar',
+        opacity: /基线/.test(r.name) ? 0.5 : 1
+      }, s);
+      const v = el('text', { x: PADL + bw + 8, y: y + rowH / 2 + 4, class: 'lbl-mono' }, s);
+      v.textContent = fmt(r.mae, 2);
+    });
+    const ax = el('text', { x: PADL, y: top - 2, class: 'lbl-mono' }, s);
+    ax.textContent = 'MAE（分钟）';
+  })();
+
+  /* ---------------- 模型表 ---------------- */
+  const modelNotes = {
+    '规则基线(距离/18km/h+12)': ['零依赖、绝对稳定', '无法表达拥堵 / 时段 / 商家差异'],
+    '全局均值基线': ['只反映城市均值', '不区分任何条件'],
+    '线性回归': ['可解释、训练秒级', '无法捕捉交互（雨 × 晚高峰 × 远单）'],
+    'LightGBM': ['快、原生类别与缺失、SHAP', '需控制叶子样本数'],
+    'LightGBM+单调约束': ['上述全部 + 业务先验锁死方向', '约束过强时略损拟合度'],
+    'XGBoost': ['生态成熟、稳健', 'MAE 目标二阶信息退化，收敛偏慢'],
+    'CatBoost': ['类别处理最强，MAE 最低', '模型更大、推理更慢、单调约束灵活性差'],
+    'MLP(2 层)': ['表达力强，易扩展多任务', '小样本表格场景不占优，可解释性弱'],
+  };
+  document.getElementById('model-table').innerHTML = D.model_compare.map(r => {
+    const n = modelNotes[r.name] || ['', ''];
+    const cls = /单调约束/.test(r.name) ? ' class="pick"' : '';
+    return `<tr${cls}><td>${r.name}${/单调约束/.test(r.name) ? ' <span class="tag ok">选定</span>' : ''}</td>
+      <td class="num">${fmt(r.mae, 2)}</td><td class="num">${fmt(r.rmse, 2)}</td>
+      <td class="num">${fmt(r.mape, 1)}</td><td class="num">${fmt(r.r2, 3)}</td>
+      <td style="color:var(--ink-2);font-size:12.5px">${n[0]}</td>
+      <td style="color:var(--ink-2);font-size:12.5px">${n[1]}</td></tr>`;
+  }).join('');
+
+  /* ---------------- 切分时间轴 ---------------- */
+  (() => {
+    const start = new Date('2026-01-01T00:00:00');
+    const days = D.meta.days;
+    const seg = [];
+    for (let i = 0; i < days; i++) {
+      const dt = new Date(start.getTime() + i * 864e5);
+      const iso = dt.toISOString().slice(0, 10);
+      let kind = 'gap';
+      const [ts, te] = D.split.train, [vs, ve] = D.split.valid, [es, ee] = D.split.test;
+      if (iso >= ts && iso <= te) kind = 'train';
+      else if (iso >= vs && iso <= ve) kind = 'valid';
+      else if (iso >= es && iso <= ee) kind = 'test';
+      seg.push({ iso, kind, dt });
+    }
+    const W = 760, H = 132, L = 10, R = 760 - 10;
+    const s = svg(document.getElementById('chart-split'), W, H);
+    const bw = (R - L) / days;
+    const colors = { train: 'var(--accent)', valid: 'var(--warn)', test: 'var(--ink-2)', gap: 'var(--line-strong)' };
+    const op = { train: 0.92, valid: 0.85, test: 0.55, gap: 0.55 };
+    seg.forEach((d, i) => {
+      el('rect', { x: L + i * bw, y: 30, width: Math.max(bw - 1.2, 1), height: 44, rx: 1.5, fill: colors[d.kind], opacity: op[d.kind] }, s);
+    });
+    // 月份刻度
+    for (let i = 0; i < days; i++) {
+      const d = seg[i];
+      if (d.dt.getDate() === 1 || i === 0) {
+        el('line', { x1: L + i * bw, x2: L + i * bw, y1: 78, y2: 84, class: 'gridline' }, s);
+        const t = el('text', { x: L + i * bw, y: 96, class: 'lbl-mono' }, s);
+        t.textContent = `${d.dt.getMonth() + 1}月`;
+      }
+    }
+    const layers = [
+      { kind: 'train', label: '训练 42 天', sub: `48,001 单` },
+      { kind: 'valid', label: '验证 8 天', sub: `9,664 单` },
+      { kind: 'test', label: '测试 8 天', sub: `9,511 单` },
+    ];
+    // 标注在带上方
+    const boxes = [
+      { i0: 0, i1: 41, label: '训练段 · 42 天 · 48,001 单' },
+      { i0: 43, i1: 50, label: '验证段 · 8 天 · 9,664 单' },
+      { i0: 52, i1: 59, label: '测试段 · 8 天 · 9,511 单' },
+    ];
+    boxes.forEach((b, k) => {
+      const x0 = L + b.i0 * bw, x1 = L + (b.i1 + 1) * bw;
+      el('line', { x1: x0, x2: x1, y1: 22, y2: 22, stroke: 'var(--line-strong)', 'stroke-width': 1 }, s);
+      el('line', { x1: x0, x2: x0, y1: 22, y2: 27, stroke: 'var(--line-strong)' }, s);
+      el('line', { x1: x1, x2: x1, y1: 22, y2: 27, stroke: 'var(--line-strong)' }, s);
+      const t = el('text', { x: (x0 + x1) / 2, y: 16, 'text-anchor': 'middle', class: k === 0 ? 'lbl-strong' : 'lbl' }, s);
+      t.textContent = b.label;
+    });
+    // 隔离带标注
+    [42, 51].forEach((i, k) => {
+      const x = L + i * bw + bw / 2;
+      const t = el('text', { x, y: 86, 'text-anchor': k === 0 ? 'start' : 'start', class: 'lbl-mono' }, s);
+      t.textContent = '隔离 1 天';
+      t.setAttribute('fill', 'var(--warn)');
+      t.style.fontSize = '9.5px';
+    });
+  })();
+
+  /* ---------------- 泄露说明 ---------------- */
+  (() => {
+    const L = D.leak;
+    const f = v => fmt(v, 2);
+    document.getElementById('leaknote').innerHTML =
+      `<b>两种"离线好看、上线打脸"的量化。</b><br>` +
+      `① 切分方式：同一份合法特征，随机切分 MAE <span class="mono">${f(L.random_split.mae)}</span>，时序切分 <span class="mono">${f(L.time_split.mae)}</span> —— 随机切分把误差低估 <b>${pct(L.inflation, 0)}</b>。` +
+      `同一天的订单同时进训练与测试，等于提前知道了当天全城偏慢。<br>` +
+      `② 事后特征：加入"（片区, 当天）全量平均时长"，时序切分下 MAE 降到 <span class="mono">${f(L.hindsight.mae)}</span>，再降 ${pct((L.time_split.mae - L.hindsight.mae) / L.time_split.mae, 0)}。` +
+      `这个特征在接单那一刻不存在，属于<b>不可部署特征</b>——离线越漂亮，上线越惨。`;
+  })();
+
+  /* ---------------- 业务统计 ---------------- */
+  document.getElementById('bizstats').innerHTML = [
+    ['超时识别 Precision', pct(ot.precision), `SLA ${ot.sla} 分钟`],
+    ['Recall', pct(ot.recall), `测试段超时单占 ${pct(ot.positive_rate)}`],
+    ['F1 / AUC', `${pct(ot.f1)} / ${fmt(ot.auc, 3)}`, '验证集标定阈值'],
+    ['P90 覆盖率', pct(p90.coverage_cal), `校准前 ${pct(p90.coverage_raw)}`],
+    ['预警打标率', pct(ot.flag_rate), '低于实际超时率，偏保守'],
+    ['P90 校准 δ', `+${fmt(p90.delta, 2)}`, '分钟，仅用验证集'],
+  ].map(([k, v, s]) => `<div><span class="k">${k}</span><span class="v">${v}</span><span class="s">${s}</span></div>`).join('');
+
+  document.getElementById('th-p90').textContent = `${fmt(ot.threshold, 1)} 分钟`;
+  document.getElementById('th-delta').textContent = `+${fmt(p90.delta, 2)} 分钟`;
+
+  /* ---------------- 逐日覆盖率 ---------------- */
+  (() => {
+    const rows = D.daily_coverage;
+    const W = 760, H = 248, L = 48, R = W - 16, T = 30, B = 200;
+    const s = svg(document.getElementById('chart-coverage'), W, H);
+    const y = v => B - (v - 0.55) / 0.5 * (B - T);
+    const slot = (R - L) / rows.length;
+    const bw = Math.min(slot * 0.46, 34);
+    for (const t of [0.6, 0.7, 0.8, 0.9, 1.0]) {
+      el('line', { x1: L, x2: R, y1: y(t), y2: y(t), class: 'gridline' }, s);
+      const tx = el('text', { x: L - 8, y: y(t) + 3, 'text-anchor': 'end', class: 'lbl-mono' }, s);
+      tx.textContent = Math.round(t * 100) + '%';
+    }
+    rows.forEach((r, i) => {
+      const cx = L + slot * i + slot / 2;
+      const bad = r.coverage < 0.85;
+      const yTop = y(r.coverage);
+      el('rect', {
+        x: cx - bw / 2, y: yTop, width: bw, height: Math.max(B - yTop, 1), rx: 3,
+        fill: bad ? 'var(--warn)' : 'var(--accent)', opacity: bad ? 1 : 0.9
+      }, s);
+      const lab = el('text', { x: cx, y: yTop - 8, 'text-anchor': 'middle', class: 'lbl-mono' }, s);
+      lab.textContent = Math.round(r.coverage * 100) + '%';
+      if (bad) lab.setAttribute('fill', 'var(--warn)');
+      const d = el('text', { x: cx, y: B + 18, 'text-anchor': 'middle', class: 'lbl-mono' }, s);
+      d.textContent = r.date.slice(5);
+    });
+    el('line', { x1: L, x2: R, y1: y(0.9), y2: y(0.9), stroke: 'var(--accent)', 'stroke-width': 1.4, 'stroke-dasharray': '5 4' }, s);
+    const tgt = el('text', { x: L, y: y(0.9) - 7, class: 'lbl-mono', fill: 'var(--accent)' }, s);
+    tgt.textContent = '名义 90%';
+    el('line', { x1: L, x2: R, y1: B, y2: B, stroke: 'var(--line-strong)' }, s);
+  })();
+
+  /* ---------------- 高风险清单 ---------------- */
+  (() => {
+    const rows = D.watchlist.slice(0, 5);
+    const host = document.getElementById('watchlist');
+    host.innerHTML = `<div class="row hd"><span>订单</span><span>片区 / 时段 / 天气</span><span>P50 → P90</span><span>主要驱动（分钟）</span></div>` +
+      rows.map(w => `<div class="row">
+        <span class="oid">${w.order_id}</span>
+        <span>${w.area} · ${w.period} · ${w.weather}<br><span style="color:var(--muted);font-size:11.5px">${fmt(w.distance_km, 1)} km</span></span>
+        <span class="mono">${fmt(w.p50, 0)} → ${fmt(w.p90, 0)}<br><span class="tag leak">超阈值</span></span>
+        <span class="drv">${w.drivers.map(d => `${d.name} <b class="mono" style="font-weight:500">${d.minutes > 0 ? '+' : ''}${fmt(d.minutes, 1)}</b>`).join('　')}</span>
+      </div>`).join('');
+  })();
+
+  /* ---------------- 散点（hexbin 单元格） ---------------- */
+  (() => {
+    const S = D.scatter, W = 620, H = 520;
+    const PAD = { l: 52, r: 18, t: 14, b: 46 };
+    const lo = S.lo, hi = S.hi;
+    const px = v => PAD.l + (v - lo) / (hi - lo) * (W - PAD.l - PAD.r);
+    const py = v => H - PAD.b - (v - lo) / (hi - lo) * (H - PAD.t - PAD.b);
+    const s = svg(document.getElementById('chart-scatter'), W, H);
+    // 网格与轴
+    const ticks = [10, 20, 30, 40, 50, 60, 70].filter(t => t >= lo && t <= hi);
+    ticks.forEach(t => {
+      el('line', { x1: px(t), x2: px(t), y1: PAD.t, y2: H - PAD.b, class: 'gridline' }, s);
+      el('line', { x1: PAD.l, x2: W - PAD.r, y1: py(t), y2: py(t), class: 'gridline' }, s);
+      const a = el('text', { x: px(t), y: H - PAD.b + 18, 'text-anchor': 'middle', class: 'lbl-mono' }, s); a.textContent = t;
+      const b = el('text', { x: PAD.l - 8, y: py(t) + 3, 'text-anchor': 'end', class: 'lbl-mono' }, s); b.textContent = t;
+    });
+    const maxC = S.max_count;
+    S.cells.forEach(([x, y, w, h, c]) => {
+      const t = Math.log1p(c) / Math.log1p(maxC);   // 对数映射，低密度区才看得见
+      el('rect', {
+        x: px(x) + 0.35, y: py(y + h) + 0.35,
+        width: Math.max(px(x + w) - px(x) - 0.7, 0.8),
+        height: Math.max(py(y) - py(y + h) - 0.7, 0.8),
+        fill: 'var(--accent)', 'fill-opacity': (0.06 + 0.9 * Math.pow(t, 0.75)).toFixed(3),
+      }, s);
+    });
+    el('line', {
+      x1: px(lo + 2), y1: py(lo + 2), x2: px(hi), y2: py(hi),
+      stroke: 'var(--ink-2)', 'stroke-width': 1.2, 'stroke-dasharray': '5 4', opacity: .7
+    }, s);
+    const xl = el('text', { x: (PAD.l + W - PAD.r) / 2, y: H - 8, 'text-anchor': 'middle', class: 'lbl' }, s);
+    xl.textContent = '真实配送时长（分钟）';
+    const yl = el('text', { x: 14, y: (PAD.t + H - PAD.b) / 2, 'text-anchor': 'middle', class: 'lbl', transform: `rotate(-90 14 ${(PAD.t + H - PAD.b) / 2})` }, s);
+    yl.textContent = '预测配送时长（分钟）';
+  })();
+
+  /* ---------------- 特征重要性 ---------------- */
+  (() => {
+    const rows = D.importance.slice(0, 12);
+    const W = 520, rowH = 26, PADL = 132, PADR = 46, T = 8;
+    const H = T + rows.length * rowH + 10;
+    const s = svg(document.getElementById('chart-imp'), W, H);
+    const max = Math.max(...rows.map(r => r.share)) * 1.12;
+    const x = v => PADL + v / max * (W - PADL - PADR);
+    rows.forEach((r, i) => {
+      const y = T + i * rowH;
+      el('rect', { x: PADL, y: y + (rowH - 13) / 2, width: Math.max(x(r.share) - PADL, 1.5), height: 13, rx: 2.5, fill: 'var(--accent)', opacity: i === 0 ? 1 : 0.82 }, s);
+      const t = el('text', { x: PADL - 10, y: y + rowH / 2 + 4, 'text-anchor': 'end', class: 'lbl' }, s);
+      t.textContent = r.cn;
+      const v = el('text', { x: x(r.share) + 7, y: y + rowH / 2 + 4, class: 'lbl-mono' }, s);
+      v.textContent = (r.share * 100).toFixed(1) + '%';
+    });
+    const ax = el('text', { x: PADL, y: H - 1, class: 'lbl-mono' }, s);
+    ax.textContent = 'gain 占比';
+  })();
+
+  /* ---------------- 误差分布 ---------------- */
+  (() => {
+    const R = D.residual;
+    const edges = R.edges, counts = R.counts;
+    const W = 520, H = 300, PAD = { l: 44, r: 14, t: 24, b: 42 };
+    const s = svg(document.getElementById('chart-resid'), W, H);
+    const lo = edges[0], hi = edges[edges.length - 1];
+    const px = v => PAD.l + (v - lo) / (hi - lo) * (W - PAD.l - PAD.r);
+    const maxC = Math.max(...counts);
+    const py = v => H - PAD.b - v / maxC * (H - PAD.t - PAD.b);
+    for (let t = 0; t <= maxC; t += 100) {
+      if (t > maxC) break;
+      el('line', { x1: PAD.l, x2: W - PAD.r, y1: py(t), y2: py(t), class: 'gridline' }, s);
+      const a = el('text', { x: PAD.l - 8, y: py(t) + 3, 'text-anchor': 'end', class: 'lbl-mono' }, s);
+      a.textContent = t;
+    }
+    counts.forEach((c, i) => {
+      const x0 = px(edges[i]), x1 = px(edges[i + 1]);
+      if (c <= 0) return;
+      el('rect', { x: x0 + 0.4, y: py(c), width: Math.max(x1 - x0 - 0.8, 0.8), height: H - PAD.b - py(c), fill: 'var(--accent)', opacity: .9, rx: 1 }, s);
+    });
+    // 零线与均值线
+    el('line', { x1: px(0), x2: px(0), y1: PAD.t - 6, y2: H - PAD.b, stroke: 'var(--ink-2)', 'stroke-width': 1, opacity: .55 }, s);
+    el('line', { x1: px(R.mean), x2: px(R.mean), y1: PAD.t - 6, y2: H - PAD.b, stroke: 'var(--warn)', 'stroke-width': 1.8 }, s);
+    const mlab = el('text', { x: px(R.mean) - 6, y: PAD.t - 10, 'text-anchor': 'end', class: 'lbl-mono', fill: 'var(--warn)' }, s);
+    mlab.textContent = `均值 ${R.mean > 0 ? '+' : ''}${fmt(R.mean, 2)}`;
+    [-15, -10, -5, 0, 5, 10].filter(t => t >= lo && t <= hi).forEach(t => {
+      const a = el('text', { x: px(t), y: H - PAD.b + 18, 'text-anchor': 'middle', class: 'lbl-mono' }, s);
+      a.textContent = t;
+    });
+    const xl = el('text', { x: (PAD.l + W - PAD.r) / 2, y: H - 6, 'text-anchor': 'middle', class: 'lbl' }, s);
+    xl.textContent = '预测 − 真实（分钟）';
+    const ann = el('text', { x: W - PAD.r, y: PAD.t - 10, 'text-anchor': 'end', class: 'lbl-mono' }, s);
+    ann.textContent = `P90 绝对误差 ${fmt(R.p90, 1)} 分钟`;
+  })();
+
+  /* ---------------- 分时段表 ---------------- */
+  const read = {
+    '凌晨': '样本最少，路况最好，误差最低',
+    '早高峰': '写字楼早餐单集中，出餐等待上升',
+    '午高峰': '样本最多，误差接近均值',
+    '平峰': '最稳定的时段',
+    '晚高峰': '叠加晚餐 + 下班，误差最高',
+  };
+  document.querySelector('#period-table tbody').innerHTML = D.period_mae.map(p =>
+    `<tr${p.period === '晚高峰' ? ' class="pick"' : ''}><td>${p.period}</td><td class="num">${fmt(p.mae, 2)}</td><td class="num">${p.n.toLocaleString()}</td><td style="color:var(--ink-2);font-size:12.5px">${read[p.period] || ''}</td></tr>`
+  ).join('');
+})();
+</script>
